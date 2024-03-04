@@ -1,0 +1,62 @@
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+import time
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
+def load_model(model_path, quantize=True, half_precision=True):
+    """
+    Loading and optimizing the model for faster inference.
+    """
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(model_path)
+
+    if quantize:
+        model = torch.quantization.quantize_dynamic(model, {torch.nn.Linear}, dtype=torch.qint8)
+
+    if half_precision:
+        model = model.half()
+
+    model.eval()
+    model.cuda()
+
+    return model, tokenizer
+
+def run_model(model, tokenizer, prompt):
+    """
+    Run the model on the given prompt and return the output.
+    """
+    inputs = tokenizer(prompt, return_tensors="pt").to("cuda")
+    with torch.no_grad():
+        outputs = model.generate(**inputs, max_new_tokens=128)
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
+
+def main():
+    # Loading the model path
+    model_path = "../input/mistral/pytorch/7b-instruct-v0.1-hf/1"
+
+    # Loading and optimize the model
+    model, tokenizer = load_model(model_path, quantize=True, half_precision=True)
+
+    
+    dummy_input = tokenizer.encode("Hello, world!", return_tensors="pt").to("cuda")
+    for _ in range(10):
+        with torch.no_grad():
+            model.generate(**dummy_input, max_new_tokens=128)
+
+    # Wait for user input prompt
+    prompt = input("Enter your prompt: ")
+
+    # Running the model on the prompt
+    start_time = time.time()
+    response = run_model(model, tokenizer, prompt)
+    end_time = time.time()
+
+    # Output the model response and performance metrics
+    print("Model Response:", response)
+    total_tokens = 128 + 128  # Input tokens + Output tokens
+    throughput = total_tokens * 32 / (end_time - start_time)
+    print(f"Total throughput (in + out tokens per second): {throughput:.2f} tokens/sec")
+
+if __name__ == "__main__":
+    main()
